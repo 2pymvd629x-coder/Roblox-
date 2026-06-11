@@ -31,6 +31,7 @@ local isRpgStoreActive = false
 local isEspActive = false
 local isAimBotActive = false
 local fovRadius = 80
+local guiVisible = true
 
 local killLoop, cashLoop, rpgStoreLoop, aimbotConnection
 
@@ -115,7 +116,7 @@ local success, err = pcall(function()
 end)
 if not success then screenGui.Parent = localPlayer.PlayerGui end
 
--- الإطار الرئيسي
+-- الإطار الرئيسي للسكربت
 local phoneFrame = Instance.new("Frame")
 phoneFrame.Size = UDim2.new(0, 370, 0, 520)
 phoneFrame.Position = UDim2.new(0.5, -185, 0.5, -260)
@@ -133,7 +134,6 @@ topBar.ZIndex = 2
 topBar.Parent = phoneFrame
 addGradient(topBar, Color3.fromRGB(70, 35, 140), Color3.fromRGB(20, 10, 50), 90)
 
--- تفعيل ميزة السحب للقائمة من الـ TopBar
 makeDraggable(phoneFrame, topBar)
 
 local titleLabel = Instance.new("TextLabel")
@@ -208,6 +208,38 @@ addCorner(fovCircleGui, 9999)
 addStroke(fovCircleGui, Color3.fromRGB(160, 90, 255), 2)
 
 -- ══════════════════════════════════════
+-- [زر الهاتف الصغير لإغلاق وفتح الواجهة + سحب الزر]
+-- ══════════════════════════════════════
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 55, 0, 55)
+toggleButton.Position = UDim2.new(0, 20, 0.3, 0)
+toggleButton.BackgroundColor3 = Color3.fromRGB(35, 15, 75)
+toggleButton.Text = "RTA"
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.TextSize = 14
+toggleButton.ZIndex = 10
+toggleButton.Parent = screenGui
+addCorner(toggleButton, 99)
+addStroke(toggleButton, Color3.fromRGB(160, 100, 255), 2)
+addGradient(toggleButton, Color3.fromRGB(90, 40, 180), Color3.fromRGB(30, 10, 60), 135)
+
+makeDraggable(toggleButton, toggleButton)
+
+local function toggleGuiElements()
+    guiVisible = not guiVisible
+    phoneFrame.Visible = guiVisible
+end
+
+toggleButton.MouseButton1Click:Connect(toggleGuiElements)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
+        toggleGuiElements()
+    end
+end)
+
+-- ══════════════════════════════════════
 -- [الوظائف الميكانيكية والبرمجية]
 -- ══════════════════════════════════════
 
@@ -257,20 +289,30 @@ local function killNearestPlayers()
     end
 end
 
+-- [دالة تجميع الفلوس المحدثة - تم استثناء الأسلحة تماماً]
 local function collectCash()
     local char = localPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    local handle = nil
+    local cashPart = nil
+    -- البحث في الـ Workspace عن الفلوس فقط مع استثناء مجسمات الأسلحة المعروفة
     for _, object in pairs(Workspace:GetChildren()) do
-        local h = object:FindFirstChild("Handle")
-        if h and h:IsA("BasePart") then handle = h break end
+        -- التأكد من أن المجسم ليس من الأسلحة المذكورة M4 أو AR أو M16
+        if object.Name ~= "M4" and object.Name ~= "AR" and object.Name ~= "M16" and object.Name ~= "WeaponsSystem" then
+            -- التحقق من وجود جزء للتجميع والتحقق من الاسم الشائع للفلوس بالسيرفر
+            local h = object:FindFirstChild("Handle") or object:FindFirstChild("Cash") or object:FindFirstChild("Money")
+            if h and h:IsA("BasePart") then 
+                cashPart = h 
+                break 
+            end
+        end
     end
 
-    if handle then
-        hrp.CFrame = handle.CFrame
+    if cashPart then
+        hrp.CFrame = cashPart.CFrame
     else
+        -- إذا لم تتوفر فلوس بالخريطة ينتقل لمنطقة الأمان تلقائياً
         local safeZone = getSafeZone()
         if safeZone and safeZone:IsA("BasePart") then hrp.CFrame = safeZone.CFrame + Vector3.new(0, 3, 0) end
     end
@@ -307,11 +349,11 @@ for _, player in pairs(Players:GetPlayers()) do
     end)
 end
 
--- [نظام تعويض المسافات التلقائي للتصويب الذكي]
-local function getClosestPlayerToMouse()
+-- [حساب وتحديد المسافات فوق الرأس بدقة بناءً على مسافة 80 ستميد]
+local function getClosestPlayerToFOV()
     local closestTarget = nil
     local maxDistance = fovRadius
-    local mousePos = UserInputService:GetMouseLocation()
+    local screenCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
     local calculatedOffset = 0
 
     for _, p in pairs(Players:GetPlayers()) do
@@ -319,17 +361,19 @@ local function getClosestPlayerToMouse()
             if p.Character.Humanoid.Health > 0 then
                 local head = p.Character:FindFirstChild("Head") or p.Character.HumanoidRootPart
                 local screenPos, onScreen = camera:WorldToScreenPoint(head.Position)
+                
                 if onScreen then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
                     if dist < maxDistance then
                         maxDistance = dist
                         closestTarget = head
                         
+                        -- حساب المسافة الحقيقية لتحديد الارتفاع المطلوب
                         local realDistance = (camera.CFrame.Position - head.Position).Magnitude
-                        if realDistance <= 50 then
-                            calculatedOffset = 3
+                        if realDistance <= 80 then
+                            calculatedOffset = 2  
                         else
-                            calculatedOffset = 5
+                            calculatedOffset = 7  
                         end
                     end
                 end
@@ -341,11 +385,11 @@ end
 
 local function toggleAimbot(state)
     isAimBotActive = state
-    fovCircleGui.Visible = state
+    fovCircleGui.Visible = state 
+    
     if state then
-        -- تم تعديل الكود هنا ليعمل الأيم بوت تلقائياً بمجرد وجود الهدف داخل الدائرة دون الحاجة للضغط على أي أزرار
         aimbotConnection = RunService.RenderStepped:Connect(function()
-            local target, offset = getClosestPlayerToMouse()
+            local target, offset = getClosestPlayerToFOV()
             if target then
                 local targetPositionWithOffset = target.Position + Vector3.new(0, offset, 0)
                 camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetPositionWithOffset)
@@ -462,7 +506,7 @@ local function createSlider(order)
             local percentage = math.clamp((input.Position.X - barPos.X) / barSize.X, 0, 1)
             
             sliderButton.Position = UDim2.new(percentage, -8, 0.5, -8)
-            fovRadius = math.floor(30 + (percentage * 120))
+            fovRadius = math.floor(30 + (percentage * 150))
             sliderLabel.Text = "حجم دائرة التصويب: " .. fovRadius
             fovCircleGui.Size = UDim2.new(0, fovRadius * 2, 0, fovRadius * 2)
             fovCircleGui.Position = UDim2.new(0.5, -fovRadius, 0.5, -fovRadius)
@@ -471,10 +515,10 @@ local function createSlider(order)
 end
 
 -- ══════════════════════════════════════
--- [حقن القوائم بالترتيب والأزرار الجديدة]
+-- [حقن القوائم بالترتيب بالأزرار المحدثة]
 -- ══════════════════════════════════════
 
-createCategoryLabel("الخيارات القتالية والأوتو", 1)
+createCategoryLabel("السكربت قيد التطوير  ", 1)
 
 createToggle("قتل أقرب اللاعبين تلقائيا", 2, function(state)
     isKillNearestActive = state
@@ -490,7 +534,7 @@ createToggle("قتل أقرب اللاعبين تلقائيا", 2, function(stat
     end
 end)
 
-createToggle("تجميع الفلوس الذكي والهروب", 3, function(state)
+createToggle("تجميع فلوس", 3, function(state)
     isCollectingCash = state
     if isCollectingCash then
         cashLoop = task.spawn(function()
@@ -526,13 +570,11 @@ createToggle("تخزين أر بي جي تلقائيا", 4, function(state)
     end
 end)
 
--- زر الأيم بوت التلقائي الجديد
-createToggle("تفعيل التوجيه التلقائي (Aimbot)", 5, function(state)
+createToggle("تصويب", 5, function(state)
     toggleAimbot(state)
 end)
 
--- زر الـ ESP ورؤية اللاعبين خلف الجدران
-createToggle("رؤية اللاعبين خلف الجدران (ESP)", 6, function(state)
+createToggle("كشف الاعبين", 6, function(state)
     toggleEsp(state)
 end)
 
